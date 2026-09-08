@@ -152,6 +152,7 @@ def forecast_series(
     timezone_name: str = "Europe/Amsterdam",
     quarters: int = 8,
     forecast_start: date | datetime | None = None,
+    contract_start_month: int = 8,
 ) -> pd.DataFrame:
     """Forecast total electricity kWh and gas m3 from local daily usage."""
     frame = readings_frame(readings)
@@ -183,7 +184,7 @@ def forecast_series(
     if daily_usage.empty:
         return pd.DataFrame(columns=["electricity", "gas"])
 
-    daily_usage["contract_year"] = daily_usage.index.year - (daily_usage.index.month < 8).astype(int)
+    daily_usage["contract_year"] = daily_usage.index.year - (daily_usage.index.month < contract_start_month).astype(int)
     annual = daily_usage.groupby("contract_year")[['electricity', 'gas']].sum(min_count=1)
     latest_contract_year = int(daily_usage["contract_year"].iloc[-1])
     complete_annual = annual.drop(index=latest_contract_year, errors="ignore")
@@ -200,7 +201,7 @@ def forecast_series(
     for timestamp in forecast.index:
         quarter_days = (timestamp + pd.offsets.QuarterBegin(startingMonth=1) - timestamp).days
         quarter = timestamp.quarter
-        contract_year = timestamp.year - int(timestamp.month < 8)
+        contract_year = timestamp.year - int(timestamp.month < contract_start_month)
         years_ahead = contract_year - latest_contract_year
         trend = (1 + growth) ** years_ahead
         forecast.loc[timestamp] = seasonal_daily.loc[quarter] * quarter_days * trend
@@ -231,15 +232,17 @@ def usage_between(
 
 
 def forecast_contract_year_rows(forecast: pd.DataFrame, start_month: int = 8) -> list[dict[str, object]]:
-    """Summarize forecast totals for contract years beginning on August 1."""
+    """Summarize forecast totals for configured contract years."""
     if forecast.empty:
         return []
     frame = forecast.copy()
     frame["contract_year"] = frame.index.year - (frame.index.month < start_month).astype(int)
+    end_month = start_month - 1 or 12
+    end_year_offset = 0 if start_month == 1 else 1
     rows: list[dict[str, object]] = []
     for contract_year, group in frame.groupby("contract_year", sort=True):
         rows.append({
-            "period": f"01-08-{contract_year} t/m 31-07-{contract_year + 1}",
+            "period": f"01-{start_month:02d}-{contract_year} t/m {pd.Timestamp(contract_year + end_year_offset, end_month, 1) + pd.offsets.MonthEnd(1):%d-%m-%Y}",
             "electricity": float(group["electricity"].sum()),
             "gas": float(group["gas"].sum()),
         })
@@ -253,13 +256,14 @@ def apply_forecast_electricity_adjustments(
     heat_pump: bool = False,
     induction_kwh: float = 200.0,
     heat_pump_kwh: float = 3000.0,
+    contract_start_month: int = 8,
 ) -> pd.DataFrame:
     """Add optional annual electricity loads, distributed by quarter length."""
     adjusted = forecast.copy()
     annual_increment = (induction_kwh if induction else 0.0) + (heat_pump_kwh if heat_pump else 0.0)
     if adjusted.empty or not annual_increment:
         return adjusted
-    contract_year = adjusted.index.year - (adjusted.index.month < 8).astype(int)
+    contract_year = adjusted.index.year - (adjusted.index.month < contract_start_month).astype(int)
     for year, positions in pd.Series(range(len(adjusted)), index=adjusted.index).groupby(contract_year):
         year_index = positions.index
         quarter_days = pd.Series(
@@ -299,6 +303,29 @@ def annualized_usage(
     total = float(observed.sum())
     span_days = max((observed.index.max().date() - observed.index.min().date()).days + 1, 1)
     return total * 365 / span_days if span_days < 365 else total
+
+
+def contract_year_usage(
+    readings: list[Reading],
+    stream: str,
+    contract_start_month: int = 8,
+    timezone_name: str = "Europe/Amsterdam",
+) -> float:
+    """Return the latest configured contract-year usage."""
+    frame = readings_frame(readings)
+    if frame.empty:
+        return 0.0
+    frame.index = frame.index.tz_convert(timezone_name)
+    if stream == "electricity":
+        frame = frame[frame["stream"].isin(["elec_day", "elec_night"])]
+    else:
+        frame = frame[frame["stream"] == stream]
+    daily = frame.groupby(frame.index.date)["value"].sum()
+    if daily.empty:
+        return 0.0
+    daily.index = pd.DatetimeIndex(daily.index).tz_localize(timezone_name)
+    contract_years = daily.index.year - (daily.index.month < contract_start_month).astype(int)
+    return float(daily[contract_years == contract_years[-1]].sum())
 
 
 def _remove_daily_outliers(frame: pd.DataFrame) -> pd.DataFrame:

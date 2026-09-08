@@ -2,6 +2,7 @@ from datetime import date
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,6 +17,7 @@ class Settings(BaseSettings):
     specific_yield_kwh_per_kwp: float = 880.0
     panel_area_m2: float = 1.998
     solar_target_percent: float = 75.0
+    contract_start_month: int = Field(default=8, ge=1, le=12)
     forecast_electricity_tn_base: float = 0.0
     forecast_electricity_tl_base: float = 0.0
     forecast_gas_base: float = 0.0
@@ -34,6 +36,10 @@ class Settings(BaseSettings):
     @property
     def database_path(self) -> Path:
         return self.data_dir / "toon.sqlite3"
+
+    @property
+    def contract_end_month(self) -> int:
+        return self.contract_start_month - 1 or 12
 
 
 @lru_cache

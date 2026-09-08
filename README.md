@@ -15,6 +15,8 @@ Set `TOON_FORECAST_ELECTRICITY_TN_BASE`, `TOON_FORECAST_ELECTRICITY_TL_BASE`, an
 
 Set `TOON_SOLAR_TARGET_PERCENT` to choose the percentage of annual electricity usage used for the Solar advice panel-count calculation. The Solar advice cog can also change this value while the dashboard is running.
 
+Set `TOON_CONTRACT_START_MONTH` to the first month of the user's annual contract period. The end month is derived automatically; for example, `8` means August through July. The Forecast settings cog can also change this value while the dashboard is running.
+
 The Solar advice cog also accepts a panel name and panel power. Leave the yearly yield field blank to use the existing `880 kWh/kWp/year` factor, which calculates `455 Wp × 880 / 1000 = 400.4 kWh/year` for the default panel. Enter a yearly yield when the supplier provides a fixed per-panel value; that value takes precedence over the factor.
 
 The Forecast settings cog also accepts the date on which those meter baselines apply. The graph starts at the beginning of the next quarter from the current date and adds stored electricity and gas usage from the selected base date through that forecast start.

@@ -9,7 +9,7 @@ from fastapi import APIRouter, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from .analysis import apply_forecast_electricity_adjustments, analysis_rows, annualized_usage, forecast_contract_year_rows, forecast_series, gas_analysis_rows, next_quarter_start, series, solar_advice, usage_between, zoom_window
+from .analysis import apply_forecast_electricity_adjustments, analysis_rows, contract_year_usage, forecast_contract_year_rows, forecast_series, gas_analysis_rows, next_quarter_start, series, solar_advice, usage_between, zoom_window
 from .charts import render_forecast_chart, render_series_chart
 from .config import Settings
 from .refresh import refresh_data
@@ -55,7 +55,7 @@ def dashboard(
     chosen_date = selected_date or date.today()
     readings = store.all_readings()
     forecast_start = next_quarter_start(datetime.now(), settings.timezone)
-    forecast_data = forecast_series(readings, settings.timezone, forecast_start=forecast_start) if stream == "forecast" else None
+    forecast_data = forecast_series(readings, settings.timezone, forecast_start=forecast_start, contract_start_month=settings.contract_start_month) if stream == "forecast" else None
     if forecast_data is not None:
         forecast_data = apply_forecast_electricity_adjustments(
             forecast_data,
@@ -63,8 +63,9 @@ def dashboard(
             heat_pump=heat_pump,
             induction_kwh=settings.forecast_induction_kwh,
             heat_pump_kwh=settings.forecast_heat_pump_kwh,
+            contract_start_month=settings.contract_start_month,
         )
-    forecast_year_rows = forecast_contract_year_rows(forecast_data) if forecast_data is not None else []
+    forecast_year_rows = forecast_contract_year_rows(forecast_data, settings.contract_start_month) if forecast_data is not None else []
     if stream == "forecast":
         chart_data = None
         rows = []
@@ -73,7 +74,7 @@ def dashboard(
         window_start, window_end, granularity = zoom_window(chosen_date, zoom, settings.timezone)
         chart_data = series(readings, stream, granularity, window_start, window_end, settings.timezone)
         rows = analysis_rows(readings, chosen_date.year, timezone_name=settings.timezone) if stream == "electricity" else gas_analysis_rows(readings, chosen_date.year, settings.timezone)
-        annual_total = annualized_usage(readings, "electricity", settings.timezone)
+        annual_total = contract_year_usage(readings, "electricity", settings.contract_start_month, settings.timezone)
     has_solar_basis = bool(rows) or (stream == "forecast" and forecast_data is not None and not forecast_data.empty)
     advice = solar_advice(
         annual_total,
@@ -123,12 +124,14 @@ def forecast_settings(
     electricity_tl_base: Annotated[float, Form(ge=0)] = 0.0,
     gas_base: Annotated[float, Form(ge=0)] = 0.0,
     forecast_base_date: Annotated[date, Form()] = date(2026, 8, 1),
+    contract_start_month: Annotated[int, Form(ge=1, le=12)] = 8,
 ) -> RedirectResponse:
     settings: Settings = request.app.state.settings
     settings.forecast_electricity_tn_base = electricity_tn_base
     settings.forecast_electricity_tl_base = electricity_tl_base
     settings.forecast_gas_base = gas_base
     settings.forecast_base_date = forecast_base_date
+    settings.contract_start_month = contract_start_month
     return RedirectResponse(url="/?stream=forecast&message=Forecast+base+values+updated", status_code=303)
 
 
@@ -177,7 +180,7 @@ def chart(
     if stream == "forecast":
         forecast_start = next_quarter_start(datetime.now(), settings.timezone)
         readings = store.all_readings()
-        forecast_data = forecast_series(readings, settings.timezone, forecast_start=forecast_start)
+        forecast_data = forecast_series(readings, settings.timezone, forecast_start=forecast_start, contract_start_month=settings.contract_start_month)
         accumulated = usage_between(readings, settings.forecast_base_date, forecast_start, settings.timezone)
         forecast_data = apply_forecast_electricity_adjustments(
             forecast_data,
@@ -185,6 +188,7 @@ def chart(
             heat_pump=heat_pump,
             induction_kwh=settings.forecast_induction_kwh,
             heat_pump_kwh=settings.forecast_heat_pump_kwh,
+            contract_start_month=settings.contract_start_month,
         )
         return Response(
             render_forecast_chart(
