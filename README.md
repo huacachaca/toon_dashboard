@@ -4,7 +4,7 @@ A local FastAPI dashboard for Toon energy exports. It imports electricity day/ni
 
 ## Before Use
 
-Replace the placeholders in `docker.env.example` and the Docker files:
+Copy `docker.env.example` to `.env` and replace the placeholders. `TOON_HOST` is the Toon thermostat address; the URL used to open the dashboard is the Docker host address.
 
 - `<<ipaddress>>`: the Toon address reachable from the container host.
 - `<<certificate>>`: the host path to the TLS certificate. It is mounted in the container as `/app/backend/certificate.pem`.
@@ -25,8 +25,10 @@ Copy the edited environment file to `.env`, then build and start the container:
 
 ```sh
 cp docker.env.example .env
-docker-compose up -d --build
+docker compose --env-file .env up -d --build --force-recreate
 ```
+
+The deployment Compose file requires `TOON_HOST` and reuses the external `toon-energy-data` volume. Do not use `down -v` unless the stored readings and raw archives should be deleted.
 
 Before refreshing data, generate an export in the Toon interface. The application can download only an export that Toon has made available on the local network. SQLite data and archived exports are stored in the Docker volume `toon-energy-data`.
 

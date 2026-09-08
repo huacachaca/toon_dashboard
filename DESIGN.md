@@ -159,7 +159,7 @@ The Gas view shows monthly gas usage with:
 
 The current implementation does not convert gas to kWh or perform degree-day normalization.
 
-January analysis loads December from the preceding year as hidden context so the January change percentage has the correct prior-month baseline; the December row is not displayed in the selected year's table. For hourly electricity charts, a tariff-transition bucket containing small values in both registers is assigned to its dominant tariff so the stacked bars do not show a sliver of the previous tariff color.
+January analysis loads December from the preceding year as hidden context so the January change percentage has the correct prior-month baseline; the December row is not displayed in the selected year's table. A month with no current usage has no meaningful change percentage and displays `—`, matching subsequent empty months. For hourly electricity charts, a tariff-transition bucket containing small values in both registers is assigned to its dominant tariff so the stacked bars do not show a sliver of the previous tariff color.
 
 ### Forecast
 
@@ -195,7 +195,7 @@ Calculation:
 
 $$N_{\text{full}}=\left\lceil \frac{E_{\text{year}}}{P_{\text{panel}}\times Y}\right\rceil$$
 
-with $E_{\text{year}}$ = measured annual electricity consumption (day + night), extrapolated pro-rata if the year is incomplete.
+with $E_{\text{year}}$ = trailing 365-day electricity consumption (day + night), extrapolated pro-rata if the available history is shorter. Historical Solar advice uses this year-to-year basis; forecast Solar advice uses each configured contract-year forecast total.
 
 The Solar advice cog accepts the panel name, panel power, and optional yearly yield per panel. When a fixed yearly yield is entered, it is used directly and takes precedence over the fallback factor. When left blank, the current factor of `specific_yield_kwh_per_kwp / 1000` is retained and multiplied by the configured panel power, so changing panel power automatically recalculates the yearly yield.
 
@@ -235,7 +235,7 @@ toon/
   └── test_analysis.py
 ```
 
-Run locally from `backend/`: `uvicorn app.main:app --reload` on `:8000`. For portable deployment, use `docker-compose up -d --build`; the container serves HTTPS on the configured `<<port>>` and persists SQLite plus raw exports in the `toon-energy-data` volume. `TOON_TLS_CERTFILE` and `TOON_TLS_KEYFILE` configure only the host-side certificate sources; Compose mounts them as `/app/backend/certificate.pem` and `/app/backend/privatekey.pem` inside the container. Replace the host-path placeholders in `docker.env.example` before deployment. There is no frontend build or second development server; FastAPI serves the templates, CSS, and generated charts directly.
+Run locally from `backend/`: `uvicorn app.main:app --reload` on `:8000`. For portable deployment, use `docker compose --env-file .env up -d --build --force-recreate`; the container serves HTTPS on the configured `<<port>>` and persists SQLite plus raw exports in the external `toon-energy-data` volume. `TOON_HOST` identifies the Toon thermostat, while the dashboard URL uses the Docker host address. `TOON_TLS_CERTFILE` and `TOON_TLS_KEYFILE` configure only the host-side certificate sources; Compose mounts them as `/app/backend/certificate.pem` and `/app/backend/privatekey.pem` inside the container. Replace the host-path placeholders in `docker.env.example` before deployment. Generated chart legends are placed below the x-axis so they do not cover plotted bars or lines. There is no frontend build or second development server; FastAPI serves the templates, CSS, and generated charts directly.
 
 Additional persistence:
 
@@ -262,7 +262,7 @@ The implementation decisions below are resolved:
 5. **Solar assumptions.** The supplied CIZ39 defaults remain: 455 Wp, 0.88 kWh/Wp/year, approximately 2.00 m2, and serial installation with shading treated as a system-level constraint.
 6. **Gas analysis.** Gas has its own monthly analysis table. Conversion to kWh and degree-day normalization are optional future enhancements.
 7. **Refresh semantics.** Refresh fetches the currently available `export.zip`; it cannot trigger export generation on the Toon. A person must first show the export page and generate the archive on the thermostat.
-8. **Deployment.** Docker Compose is supported for portable HTTPS deployment, with configurable `<<port>>`, certificate mounts, and a named persistent volume. Local development remains on HTTP port `8000`.
+8. **Deployment.** Docker Compose is supported for portable HTTPS deployment, with configurable `<<port>>`, certificate mounts, and the external persistent `toon-energy-data` volume. Local development remains on HTTP port `8000`.
 
 Optional future enhancements:
 
@@ -286,4 +286,4 @@ Completed:
 9. Implemented Docker HTTPS with configurable host-side certificate and key paths.
 10. Verified the application with the current test suite and live route/chart smoke tests.
 
-Current validation: `23 passed`; the active database produces eight forecast quarters and the Electricity, Gas, and Forecast chart routes return valid SVG output. Large SQLite imports, tariff-transition buckets, hidden December analysis context, and optional forecast loads are covered by regression tests. Docker Compose configuration was verified with Docker Compose 5.5.1 on the development Mac; the production certificate files are expected to exist on the deployment host.
+Current validation: `30 passed`; the active database produces eight forecast quarters and the Electricity, Gas, and Forecast chart routes return valid SVG output. Large SQLite imports, tariff-transition buckets, hidden December analysis context, empty usage-month changes, optional forecast loads, and blank optional Solar yield settings are covered by regression tests or runtime checks. Docker Compose configuration was verified with Docker Compose 5.5.1 on the development Mac; the production certificate files are expected to exist on the deployment host.
