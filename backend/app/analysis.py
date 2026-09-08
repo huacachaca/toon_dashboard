@@ -335,8 +335,8 @@ def gas_analysis_rows(readings: list[Reading], year: int, timezone_name: str = "
     return rows
 
 
-def solar_advice(annual_kwh: float, panel_wp: float = 455.0, specific_yield_kwh_per_kwp: float = 880.0, roof_area_m2: float | None = None, panel_area_m2: float = 1.998, target_percent: float = 75.0) -> dict[str, SolarAdvice]:
-    yield_per_panel = panel_wp / 1000 * specific_yield_kwh_per_kwp
+def solar_advice(annual_kwh: float, panel_wp: float = 455.0, yearly_yield_kwh: float | None = None, specific_yield_kwh_per_kwp: float = 880.0, roof_area_m2: float | None = None, panel_area_m2: float = 1.998, target_percent: float = 75.0) -> dict[str, SolarAdvice]:
+    yield_per_panel = yearly_yield_kwh if yearly_yield_kwh is not None else panel_wp / 1000 * specific_yield_kwh_per_kwp
     target_kwh = annual_kwh * target_percent / 100
     target_count = math.ceil(target_kwh / yield_per_panel) if target_kwh > 0 else 0
     scenarios = {

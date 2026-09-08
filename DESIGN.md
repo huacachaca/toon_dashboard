@@ -180,12 +180,12 @@ Assumptions (all configurable, shown in the UI so the number is never a black bo
 
 | Parameter | Default | Source |
 |---|---|---|
-| Panel model | **JA Solar JAM54D41-455/LB** | SolarNRG product specification |
-| Panel rating | **455 Wp** | SolarNRG product specification |
+| Panel model | **JA Solar JAM54D41-455/LB** | configurable in the Solar advice cog or with `TOON_SOLAR_PANEL_NAME` |
+| Panel rating | **455 Wp** | configurable in the Solar advice cog or with `TOON_PANEL_WP` |
 | Panel dimensions | **1.762 × 1.134 × 0.030 m** | SolarNRG product specification |
 | Panel area for roof sizing | **2.00 m²** | 1.762 × 1.134 m, derived |
-| Specific yield, NL | **0.88 kWh per Wp per year** (≈880 kWh/kWp) | typical Dutch south-facing, 35° |
-| Yield per panel | 455 × 0.88 = **400.4 kWh/year** | derived from panel rating and specific yield |
+| Specific yield, NL | **0.88 kWh per Wp per year** (≈880 kWh/kWp) | fallback factor, configurable with `TOON_SPECIFIC_YIELD_KWH_PER_KWP` |
+| Yield per panel | 455 × 0.88 = **400.4 kWh/year** | derived fallback; an optional fixed supplier value can be set with `TOON_SOLAR_PANEL_YEARLY_YIELD_KWH` |
 | Electrical configuration | **Serial installation** | SolarNRG brochure: standard system is series-connected |
 | Target coverage | **75%** | configurable in the Solar advice cog or with `TOON_SOLAR_TARGET_PERCENT` |
 
@@ -196,6 +196,8 @@ Calculation:
 $$N_{\text{full}}=\left\lceil \frac{E_{\text{year}}}{P_{\text{panel}}\times Y}\right\rceil$$
 
 with $E_{\text{year}}$ = measured annual electricity consumption (day + night), extrapolated pro-rata if the year is incomplete.
+
+The Solar advice cog accepts the panel name, panel power, and optional yearly yield per panel. When a fixed yearly yield is entered, it is used directly and takes precedence over the fallback factor. When left blank, the current factor of `specific_yield_kwh_per_kwp / 1000` is retained and multiplied by the configured panel power, so changing panel power automatically recalculates the yearly yield.
 
 The card presents a configurable target scenario and a roof-limited scenario so the user can choose a policy rather than being handed one number:
 

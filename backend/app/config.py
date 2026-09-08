@@ -10,7 +10,9 @@ class Settings(BaseSettings):
     data_dir: Path = Path("data")
     electricity_counter_divisor: float = 1000.0
     gas_counter_divisor: float = 1000.0
+    solar_panel_name: str = "JA Solar JAM54D41-455/LB"
     panel_wp: float = 455.0
+    solar_panel_yearly_yield_kwh: float | None = None
     specific_yield_kwh_per_kwp: float = 880.0
     panel_area_m2: float = 1.998
     solar_target_percent: float = 75.0

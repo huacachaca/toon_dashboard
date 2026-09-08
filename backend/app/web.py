@@ -5,7 +5,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Form, Query, Request
+from fastapi import APIRouter, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
@@ -78,6 +78,7 @@ def dashboard(
     advice = solar_advice(
         annual_total,
         panel_wp=settings.panel_wp,
+        yearly_yield_kwh=settings.solar_panel_yearly_yield_kwh,
         specific_yield_kwh_per_kwp=settings.specific_yield_kwh_per_kwp,
         panel_area_m2=settings.panel_area_m2,
         target_percent=settings.solar_target_percent,
@@ -86,6 +87,7 @@ def dashboard(
         solar_advice(
             float(row["electricity"]),
             panel_wp=settings.panel_wp,
+            yearly_yield_kwh=settings.solar_panel_yearly_yield_kwh,
             specific_yield_kwh_per_kwp=settings.specific_yield_kwh_per_kwp,
             panel_area_m2=settings.panel_area_m2,
             target_percent=settings.solar_target_percent,
@@ -134,10 +136,22 @@ def forecast_settings(
 def solar_settings(
     request: Request,
     solar_target_percent: Annotated[float, Form(ge=0, le=100)] = 75.0,
+    solar_panel_name: Annotated[str, Form(min_length=1, max_length=120)] = "JA Solar JAM54D41-455/LB",
+    panel_wp: Annotated[float, Form(gt=0)] = 455.0,
+    solar_panel_yearly_yield_kwh: Annotated[str, Form()] = "",
     stream: Annotated[str, Form()] = "electricity",
 ) -> RedirectResponse:
     settings: Settings = request.app.state.settings
     settings.solar_target_percent = solar_target_percent
+    settings.solar_panel_name = solar_panel_name.strip()
+    settings.panel_wp = panel_wp
+    try:
+        yearly_yield = float(solar_panel_yearly_yield_kwh) if solar_panel_yearly_yield_kwh.strip() else None
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail="Yearly panel yield must be a positive number or blank") from error
+    if yearly_yield is not None and yearly_yield <= 0:
+        raise HTTPException(status_code=422, detail="Yearly panel yield must be positive")
+    settings.solar_panel_yearly_yield_kwh = yearly_yield
     return RedirectResponse(url=f"/?stream={stream}&message=Solar+coverage+updated", status_code=303)
 
 
