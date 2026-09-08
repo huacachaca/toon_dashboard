@@ -235,7 +235,7 @@ toon/
   └── test_analysis.py
 ```
 
-Run locally from `backend/`: `uvicorn app.main:app --reload` on `:8000`. For portable deployment, use `docker-compose up -d --build`; the container serves HTTPS on the configured `<<port>>` and persists SQLite plus raw exports in the `toon-energy-data` volume. Docker mounts certificate files from the paths supplied through `TOON_TLS_CERTFILE` and `TOON_TLS_KEYFILE`; replace the placeholders in `docker.env.example` before deployment. There is no frontend build or second development server; FastAPI serves the templates, CSS, and generated charts directly.
+Run locally from `backend/`: `uvicorn app.main:app --reload` on `:8000`. For portable deployment, use `docker-compose up -d --build`; the container serves HTTPS on the configured `<<port>>` and persists SQLite plus raw exports in the `toon-energy-data` volume. `TOON_TLS_CERTFILE` and `TOON_TLS_KEYFILE` configure only the host-side certificate sources; Compose mounts them as `/app/backend/certificate.pem` and `/app/backend/privatekey.pem` inside the container. Replace the host-path placeholders in `docker.env.example` before deployment. There is no frontend build or second development server; FastAPI serves the templates, CSS, and generated charts directly.
 
 Additional persistence:
 

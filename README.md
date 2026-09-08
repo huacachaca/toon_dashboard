@@ -7,8 +7,8 @@ A local FastAPI dashboard for Toon energy exports. It imports electricity day/ni
 Replace the placeholders in `docker.env.example` and the Docker files:
 
 - `<<ipaddress>>`: the Toon address reachable from the container host.
-- `<<certificate>>`: the host path to the TLS certificate, and the matching container path.
-- `<<certificate_key>>`: the host path to the TLS private key, and the matching container path.
+- `<<certificate>>`: the host path to the TLS certificate. It is mounted in the container as `/app/backend/certificate.pem`.
+- `<<certificate_key>>`: the host path to the TLS private key. It is mounted in the container as `/app/backend/privatekey.pem`.
 - `<<port>>`: the HTTPS port to publish.
 
 Set `TOON_FORECAST_ELECTRICITY_TN_BASE`, `TOON_FORECAST_ELECTRICITY_TL_BASE`, and `TOON_FORECAST_GAS_BASE` to the current meter-counter values. They intentionally default to `0` in this repository. Set the optional induction and heat-pump forecast loads if needed.

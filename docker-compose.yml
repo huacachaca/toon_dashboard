@@ -22,8 +22,8 @@ services:
       TOON_REFRESH_TIMEOUT_SECONDS: ${TOON_REFRESH_TIMEOUT_SECONDS:-30}
     volumes:
       - toon_data:/app/data
-      - ${TOON_TLS_CERTFILE:-<<certificate>>}:<<certificate>>:ro
-      - ${TOON_TLS_KEYFILE:-<<certificate_key>>}:<<certificate_key>>:ro
+      - ${TOON_TLS_CERTFILE:-<<certificate>>}:/app/backend/certificate.pem:ro
+      - ${TOON_TLS_KEYFILE:-<<certificate_key>>}:/app/backend/privatekey.pem:ro
 
 volumes:
   toon_data:
