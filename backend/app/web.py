@@ -9,7 +9,7 @@ from fastapi import APIRouter, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from .analysis import apply_forecast_electricity_adjustments, analysis_rows, contract_year_usage, forecast_contract_year_rows, forecast_series, gas_analysis_rows, next_quarter_start, series, solar_advice, usage_between, zoom_window
+from .analysis import apply_forecast_electricity_adjustments, analysis_rows, annualized_usage, forecast_contract_year_rows, forecast_series, gas_analysis_rows, next_quarter_start, series, solar_advice, usage_between, zoom_window
 from .charts import render_forecast_chart, render_series_chart
 from .config import Settings
 from .refresh import refresh_data
@@ -74,7 +74,7 @@ def dashboard(
         window_start, window_end, granularity = zoom_window(chosen_date, zoom, settings.timezone)
         chart_data = series(readings, stream, granularity, window_start, window_end, settings.timezone)
         rows = analysis_rows(readings, chosen_date.year, timezone_name=settings.timezone) if stream == "electricity" else gas_analysis_rows(readings, chosen_date.year, settings.timezone)
-        annual_total = contract_year_usage(readings, "electricity", settings.contract_start_month, settings.timezone)
+        annual_total = annualized_usage(readings, "electricity", settings.timezone)
     has_solar_basis = bool(rows) or (stream == "forecast" and forecast_data is not None and not forecast_data.empty)
     advice = solar_advice(
         annual_total,
