@@ -13,7 +13,7 @@ import pandas as pd
 
 
 def render_series_chart(frame: pd.DataFrame, stream: str, granularity: str) -> bytes:
-    figure, axis = plt.subplots(figsize=(11, 4.5), constrained_layout=True)
+    figure, axis = plt.subplots(figsize=(11, 4.5))
     figure.patch.set_facecolor("#f7f3eb")
     axis.set_facecolor("#fffdf8")
     if frame.empty:
@@ -23,15 +23,16 @@ def render_series_chart(frame: pd.DataFrame, stream: str, granularity: str) -> b
         axis.bar(frame.index, frame["elec_night"], label="Night", color="#1e5360", width=width)
         axis.bar(frame.index, frame["elec_day"], bottom=frame["elec_night"], label="Day", color="#e7a943", width=width)
         axis.set_ylabel("kWh")
-        axis.legend(frameon=False, ncols=2, loc="upper left")
+        figure.legend(frameon=False, ncols=2, loc="lower center", bbox_to_anchor=(0.5, 0.02))
     else:
         axis.bar(frame.index, frame["gas"], color="#d96b4d", width=_bar_width(frame.index), label="Gas")
         axis.set_ylabel("m³")
-        axis.legend(frameon=False, loc="upper left")
+        figure.legend(frameon=False, loc="lower center", bbox_to_anchor=(0.5, 0.02))
     axis.grid(axis="y", color="#d8d5ca", linewidth=0.7)
     axis.spines[["top", "right"]].set_visible(False)
     _format_time_axis(axis, granularity, frame.index.tz if isinstance(frame.index, pd.DatetimeIndex) else None)
     axis.set_title("Electricity usage" if stream == "electricity" else "Gas usage", loc="left", weight="bold")
+    figure.subplots_adjust(bottom=0.22)
     output = io.BytesIO()
     figure.savefig(output, format="svg", transparent=False)
     plt.close(figure)
@@ -44,7 +45,7 @@ def render_forecast_chart(
     gas_base: float = 0.0,
     forecast_start: pd.Timestamp | None = None,
 ) -> bytes:
-    figure, electricity_axis = plt.subplots(figsize=(11, 4.5), constrained_layout=True)
+    figure, electricity_axis = plt.subplots(figsize=(11, 4.5))
     figure.patch.set_facecolor("#f7f3eb")
     electricity_axis.set_facecolor("#fffdf8")
     if frame.empty:
@@ -92,11 +93,12 @@ def render_forecast_chart(
         gas_axis.set_ylabel("Cumulative gas m³")
         handles, labels = electricity_axis.get_legend_handles_labels()
         gas_handles, gas_labels = gas_axis.get_legend_handles_labels()
-        electricity_axis.legend(handles + gas_handles, labels + gas_labels, frameon=False, ncols=2, loc="upper left")
+        figure.legend(handles + gas_handles, labels + gas_labels, frameon=False, ncols=2, loc="lower center", bbox_to_anchor=(0.5, 0.02))
         electricity_axis.xaxis.set_major_formatter(FuncFormatter(_quarter_label))
     electricity_axis.grid(axis="y", color="#d8d5ca", linewidth=0.7)
     electricity_axis.spines[["top", "right"]].set_visible(False)
     electricity_axis.set_title("Two-year cumulative energy forecast", loc="left", weight="bold")
+    figure.subplots_adjust(bottom=0.22)
     output = io.BytesIO()
     figure.savefig(output, format="svg", transparent=False)
     plt.close(figure)
