@@ -3,11 +3,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        TOON_PORT: ${TOON_PORT:-7443}
     container_name: toon-energy
     restart: unless-stopped
     ports:
-      - "${TOON_PORT:-<<port>>}:<<port>>"
+      - "${TOON_PORT:-7443}:${TOON_PORT:-7443}"
     environment:
+      TOON_PORT: ${TOON_PORT:-7443}
       TOON_HOST: ${TOON_HOST:-<<ipaddress>>}
       TOON_DATA_DIR: /app/data
       TOON_ELECTRICITY_COUNTER_DIVISOR: ${TOON_ELECTRICITY_COUNTER_DIVISOR:-1000}
