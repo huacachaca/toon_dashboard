@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="nl-NL">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Toon Energy{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
+</head>
+<body>
+  <header class="masthead">
+    <a class="brand" href="/">Toon Energy <span>local dashboard</span></a>
+    <nav><a href="/status">Status</a></nav>
+  </header>
+  <main class="page">{% block content %}{% endblock %}</main>
+</body>
+</html>
