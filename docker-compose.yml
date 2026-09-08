@@ -36,3 +36,4 @@ services:
 volumes:
   toon_data:
     name: toon-energy-data
+    external: true
