@@ -7,7 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    toon_host: str = "<<ipaddress>>"
+    toon_host: str = Field(default="<<ipaddress>>", validation_alias="TOON_HOST")
     data_dir: Path = Path("data")
     electricity_counter_divisor: float = 1000.0
     gas_counter_divisor: float = 1000.0
