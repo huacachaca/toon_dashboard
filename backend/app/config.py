@@ -27,7 +27,12 @@ class Settings(BaseSettings):
     timezone: str = "Europe/Amsterdam"
     refresh_timeout_seconds: float = 30.0
 
-    model_config = SettingsConfigDict(env_file=".env", env_prefix="TOON_", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_prefix="TOON_",
+        env_ignore_empty=True,
+        extra="ignore",
+    )
 
     @property
     def raw_dir(self) -> Path:
