@@ -129,7 +129,7 @@ def analysis_rows(
             "total": total,
             "night_share": (night / total * 100) if total else 0.0,
             "avg_kw": total / (24 * 7 if granularity == "week" else 24 * 30 if granularity == "month" else 24),
-            "change": ((total - previous_total) / previous_total * 100) if previous_total else None,
+            "change": ((total - previous_total) / previous_total * 100) if total > 0 and previous_total else None,
         })
         previous_total = total
     return rows
@@ -356,7 +356,7 @@ def gas_analysis_rows(readings: list[Reading], year: int, timezone_name: str = "
             "period": timestamp.strftime("%d-%m-%Y"),
             "total": total,
             "average": total / 30,
-            "change": ((total - previous) / previous * 100) if previous else None,
+            "change": ((total - previous) / previous * 100) if total > 0 and previous else None,
         })
         previous = total
     return rows
