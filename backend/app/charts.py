@@ -39,10 +39,37 @@ def render_series_chart(frame: pd.DataFrame, stream: str, granularity: str) -> b
     return output.getvalue()
 
 
+def render_offset_chart(frame: pd.DataFrame, granularity: str) -> bytes:
+    """Usage (day/night bars) vs. modeled solar production, with the surplus returned to the grid."""
+    figure, axis = plt.subplots(figsize=(11, 4.5))
+    figure.patch.set_facecolor("#f7f3eb")
+    axis.set_facecolor("#fffdf8")
+    if frame.empty:
+        axis.text(0.5, 0.5, "No readings in this window", ha="center", va="center", color="#5a625d", transform=axis.transAxes)
+    else:
+        width = _bar_width(frame.index)
+        axis.bar(frame.index, frame["elec_night"], label="Night", color="#1e5360", width=width)
+        axis.bar(frame.index, frame["elec_day"], bottom=frame["elec_night"], label="Day", color="#e7a943", width=width)
+        axis.bar(frame.index, -frame["returned_to_grid"], label="Returned to grid", color="#3f9142", width=width)
+        axis.plot(frame.index, frame["production"], label="Modeled solar production", color="#7a4fae", linewidth=1.6, linestyle="--")
+        axis.axhline(0, color="#5a625d", linewidth=0.8)
+        axis.set_ylabel("kWh")
+        figure.legend(frameon=False, ncols=4, loc="lower center", bbox_to_anchor=(0.5, 0.02))
+    axis.grid(axis="y", color="#d8d5ca", linewidth=0.7)
+    axis.spines[["top", "right"]].set_visible(False)
+    _format_time_axis(axis, granularity, frame.index.tz if isinstance(frame.index, pd.DatetimeIndex) else None)
+    axis.set_title("Electricity usage offset by modeled solar production", loc="left", weight="bold")
+    figure.subplots_adjust(bottom=0.22)
+    output = io.BytesIO()
+    figure.savefig(output, format="svg", transparent=False)
+    plt.close(figure)
+    return output.getvalue()
+
+
 def render_forecast_chart(
     frame: pd.DataFrame,
     electricity_base: float = 36810.0,
-    gas_base: float = 0.0,
+    gas_base: float = 6183.0,
     forecast_start: pd.Timestamp | None = None,
 ) -> bytes:
     figure, electricity_axis = plt.subplots(figsize=(11, 4.5))

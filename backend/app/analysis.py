@@ -17,6 +17,239 @@ class SolarAdvice:
     installed_kwp: float
     expected_yield_kwh: float
     coverage_percent: float
+    annual_net_surplus_kwh: float = 0.0
+    estimated_feed_in_eur_per_year: float = 0.0
+
+
+# Compass azimuth in degrees, 0 = north, clockwise (matches solar-position convention below).
+COMPASS_AZIMUTH: dict[str, float] = {
+    "N": 0.0, "NE": 45.0, "E": 90.0, "SE": 135.0,
+    "S": 180.0, "SW": 225.0, "W": 270.0, "NW": 315.0,
+}
+
+
+def _solar_position(timestamp_utc: pd.Timestamp, latitude_deg: float, longitude_deg: float) -> tuple[float, float]:
+    """Return (elevation, azimuth) in degrees using the NOAA solar-position approximation."""
+    day_of_year = timestamp_utc.dayofyear
+    hour_utc = timestamp_utc.hour + timestamp_utc.minute / 60 + timestamp_utc.second / 3600
+    gamma = 2 * math.pi / 365 * (day_of_year - 1 + (hour_utc - 12) / 24)
+    equation_of_time = 229.18 * (
+        0.000075 + 0.001868 * math.cos(gamma) - 0.032077 * math.sin(gamma)
+        - 0.014615 * math.cos(2 * gamma) - 0.040849 * math.sin(2 * gamma)
+    )
+    declination = (
+        0.006918 - 0.399912 * math.cos(gamma) + 0.070257 * math.sin(gamma)
+        - 0.006758 * math.cos(2 * gamma) + 0.000907 * math.sin(2 * gamma)
+        - 0.002697 * math.cos(3 * gamma) + 0.00148 * math.sin(3 * gamma)
+    )
+    true_solar_time = hour_utc * 60 + equation_of_time + 4 * longitude_deg
+    hour_angle = math.radians(true_solar_time / 4 - 180)
+    lat = math.radians(latitude_deg)
+    cos_zenith = max(-1.0, min(1.0, math.sin(lat) * math.sin(declination) + math.cos(lat) * math.cos(declination) * math.cos(hour_angle)))
+    zenith = math.acos(cos_zenith)
+    elevation = 90 - math.degrees(zenith)
+    if math.sin(zenith) == 0:
+        return elevation, 180.0
+    cos_azimuth = max(-1.0, min(1.0, (math.sin(declination) - math.sin(lat) * cos_zenith) / (math.cos(lat) * math.sin(zenith))))
+    azimuth = math.degrees(math.acos(cos_azimuth))
+    azimuth = 360 - azimuth if hour_angle > 0 else azimuth
+    return elevation, azimuth
+
+
+def _clear_sky_irradiance(elevation_deg: float, day_of_year: int) -> tuple[float, float]:
+    """Rough clear-sky direct-normal and diffuse-horizontal irradiance (W/m2), no cloud cover."""
+    if elevation_deg <= 0:
+        return 0.0, 0.0
+    zenith = math.radians(90 - elevation_deg)
+    air_mass = 1 / max(math.cos(zenith), 0.02)
+    extraterrestrial = 1361 * (1 + 0.033 * math.cos(2 * math.pi * day_of_year / 365))
+    direct_normal = extraterrestrial * 0.7 ** (air_mass ** 0.678)
+    diffuse_horizontal = 0.1 * direct_normal * math.cos(zenith)
+    return direct_normal, diffuse_horizontal
+
+
+def _plane_of_array_irradiance(elevation_deg: float, sun_azimuth_deg: float, tilt_deg: float, panel_azimuth_deg: float, direct_normal: float, diffuse_horizontal: float) -> float:
+    """Transpose horizontal clear-sky irradiance onto a tilted, oriented panel plane (isotropic-sky model)."""
+    if elevation_deg <= 0:
+        return 0.0
+    zenith = math.radians(90 - elevation_deg)
+    tilt = math.radians(tilt_deg)
+    azimuth_diff = math.radians(sun_azimuth_deg - panel_azimuth_deg)
+    cos_incidence = math.cos(zenith) * math.cos(tilt) + math.sin(zenith) * math.sin(tilt) * math.cos(azimuth_diff)
+    direct_poa = direct_normal * max(cos_incidence, 0.0)
+    diffuse_poa = diffuse_horizontal * (1 + math.cos(tilt)) / 2
+    return direct_poa + diffuse_poa
+
+
+def solar_production_series(
+    start: datetime,
+    end: datetime,
+    granularity: str,
+    panel_count: int,
+    orientation: str,
+    latitude_deg: float,
+    longitude_deg: float,
+    tilt_deg: float,
+    panel_wp: float,
+    panel_area_m2: float,
+    performance_ratio: float,
+    clearness_factor: float,
+    timezone_name: str = "Europe/Amsterdam",
+    secondary_orientation: str | None = None,
+    secondary_share_percent: float = 0.0,
+) -> pd.Series:
+    """Modeled clear-sky solar production per bucket (kWh); an estimate, not a measurement.
+
+    A second roof face can be given independently of the primary orientation (e.g. a ridge
+    that isn't exactly east-west, or an uneven panel split), rather than assuming a fixed
+    50/50 east-west split.
+    """
+    timezone_info = ZoneInfo(timezone_name)
+    rule = {"hour": "h", "day": "D", "week": "W-MON", "month": "MS", "year": "YS"}[granularity]
+    local_start = pd.Timestamp(start).tz_convert(timezone_info) if pd.Timestamp(start).tzinfo else pd.Timestamp(start, tz=timezone_info)
+    local_end = pd.Timestamp(end).tz_convert(timezone_info) if pd.Timestamp(end).tzinfo else pd.Timestamp(end, tz=timezone_info)
+    target_index = pd.date_range(local_start, local_end, inclusive="left", freq=rule)
+    if panel_count <= 0:
+        return pd.Series(0.0, index=target_index, name="production")
+    hourly_index = pd.date_range(local_start, local_end, inclusive="left", freq="h")
+    secondary_share = max(0.0, min(secondary_share_percent, 100.0)) / 100 if secondary_orientation else 0.0
+    azimuth_weights = [(COMPASS_AZIMUTH[orientation], 1 - secondary_share)]
+    if secondary_share > 0:
+        azimuth_weights.append((COMPASS_AZIMUTH[secondary_orientation], secondary_share))
+    efficiency = panel_wp / 1000 / panel_area_m2
+    values = []
+    for timestamp in hourly_index:
+        timestamp_utc = timestamp.tz_convert("UTC")
+        elevation, azimuth = _solar_position(timestamp_utc, latitude_deg, longitude_deg)
+        if elevation <= 0:
+            values.append(0.0)
+            continue
+        direct_normal, diffuse_horizontal = _clear_sky_irradiance(elevation, timestamp_utc.dayofyear)
+        poa = sum(
+            weight * _plane_of_array_irradiance(elevation, azimuth, tilt_deg, panel_azimuth, direct_normal, diffuse_horizontal)
+            for panel_azimuth, weight in azimuth_weights
+        )
+        power_w = poa * panel_count * panel_area_m2 * efficiency * performance_ratio * clearness_factor
+        values.append(max(power_w, 0.0) / 1000)
+    hourly = pd.Series(values, index=hourly_index, name="production")
+    if granularity == "hour":
+        return hourly.reindex(target_index, fill_value=0.0)
+    return hourly.resample(rule).sum().reindex(target_index, fill_value=0.0)
+
+
+def _panel_production_kwargs(settings: object) -> dict[str, object]:
+    return dict(
+        latitude_deg=settings.solar_latitude,
+        longitude_deg=settings.solar_longitude,
+        tilt_deg=settings.solar_panel_tilt_degrees,
+        panel_wp=settings.panel_wp,
+        panel_area_m2=settings.panel_area_m2,
+        performance_ratio=settings.solar_system_performance_ratio,
+        clearness_factor=settings.solar_clearness_factor,
+        timezone_name=settings.timezone,
+    )
+
+
+def offset_series(
+    readings: list[Reading],
+    granularity: str,
+    start: datetime,
+    end: datetime,
+    panel_count: int,
+    orientation: str,
+    settings: object,
+    secondary_orientation: str | None = None,
+    secondary_share_percent: float = 0.0,
+) -> pd.DataFrame:
+    """Electricity usage combined with modeled solar production: grid import/export offset."""
+    usage = series(readings, "electricity", granularity, start, end, settings.timezone)
+    production = solar_production_series(start, end, granularity, panel_count, orientation, **_panel_production_kwargs(settings), secondary_orientation=secondary_orientation, secondary_share_percent=secondary_share_percent)
+    frame = usage.reindex(production.index, fill_value=0.0) if not usage.empty else pd.DataFrame(index=production.index, columns=["elec_day", "elec_night", "total"]).fillna(0.0)
+    frame["production"] = production
+    frame["from_grid"] = (frame["total"] - frame["production"]).clip(lower=0.0)
+    frame["returned_to_grid"] = (frame["production"] - frame["total"]).clip(lower=0.0)
+    return frame
+
+
+def minimal_panels_for_sun_coverage(
+    readings: list[Reading],
+    orientation: str,
+    settings: object,
+    target_percent: float = 75.0,
+    max_panels: int = 40,
+    secondary_orientation: str | None = None,
+    secondary_share_percent: float = 0.0,
+) -> dict[str, object]:
+    """Smallest panel count whose modeled production covers target_percent of usage during sunlit hours.
+
+    More panels beyond that point only add export, not daytime coverage, so the smallest
+    count reaching the target also minimizes returned-to-grid kWh among counts that qualify.
+    """
+    frame = readings_frame(readings)
+    frame = frame[frame["stream"].isin(["elec_day", "elec_night"])]
+    empty_result = {"panel_count": 0, "coverage_percent": 0.0, "returned_to_grid_kwh": 0.0, "self_consumption_of_production_percent": 0.0, "annual_net_surplus_kwh": 0.0, "estimated_feed_in_eur_per_year": 0.0, "reachable": False}
+    if frame.empty:
+        return empty_result
+    frame.index = frame.index.tz_convert(settings.timezone)
+    hourly_usage = frame["value"].resample("h").sum(min_count=1).fillna(0.0)
+    end = hourly_usage.index.max().normalize() + timedelta(days=1)
+    start = end - timedelta(days=365)
+    hourly_usage = hourly_usage[(hourly_usage.index >= start) & (hourly_usage.index < end)]
+    if hourly_usage.empty:
+        return empty_result
+    per_panel = solar_production_series(
+        start.to_pydatetime(), end.to_pydatetime(), "hour", 1, orientation, **_panel_production_kwargs(settings),
+        secondary_orientation=secondary_orientation, secondary_share_percent=secondary_share_percent,
+    ).reindex(hourly_usage.index, fill_value=0.0)
+    sun_hours = per_panel > 0
+    usage_during_sun = hourly_usage[sun_hours]
+    if usage_during_sun.sum() <= 0:
+        return empty_result
+    for count in range(0, max_panels + 1):
+        production = per_panel * count
+        self_consumed = pd.concat([production[sun_hours], usage_during_sun], axis=1).min(axis=1)
+        coverage = float(self_consumed.sum() / usage_during_sun.sum() * 100)
+        if coverage >= target_percent:
+            return _sun_coverage_result(count, coverage, production, hourly_usage, settings, reachable=True)
+    production = per_panel * max_panels
+    self_consumed = pd.concat([production[sun_hours], usage_during_sun], axis=1).min(axis=1)
+    coverage = float(self_consumed.sum() / usage_during_sun.sum() * 100)
+    return _sun_coverage_result(max_panels, coverage, production, hourly_usage, settings, reachable=False)
+
+
+def _sun_coverage_result(panel_count: int, coverage_percent: float, production: pd.Series, hourly_usage: pd.Series, settings: object, reachable: bool) -> dict[str, object]:
+    """Bundle usage-side coverage, production-side self-consumption, and the annual net surplus a feed-in tariff applies to under salderen."""
+    returned = (production - hourly_usage).clip(lower=0.0)
+    self_consumed_all = pd.concat([production, hourly_usage], axis=1).min(axis=1)
+    production_total = float(production.sum())
+    annual_net_surplus = max(production_total - float(hourly_usage.sum()), 0.0)
+    return {
+        "panel_count": panel_count,
+        "coverage_percent": coverage_percent,
+        "returned_to_grid_kwh": float(returned.sum()),
+        "self_consumption_of_production_percent": float(self_consumed_all.sum() / production_total * 100) if production_total else 0.0,
+        "annual_net_surplus_kwh": annual_net_surplus,
+        "estimated_feed_in_eur_per_year": annual_net_surplus * settings.feed_in_tariff_eur_per_kwh,
+        "reachable": reachable,
+    }
+
+
+def offset_analysis_rows(frame: pd.DataFrame) -> list[dict[str, object]]:
+    if frame.empty:
+        return []
+    rows: list[dict[str, object]] = []
+    for timestamp, row in frame.iterrows():
+        usage = float(row["total"])
+        production = float(row["production"])
+        rows.append({
+            "period": timestamp.strftime("%d-%m-%Y"),
+            "usage": usage,
+            "production": production,
+            "from_grid": float(row["from_grid"]),
+            "returned_to_grid": float(row["returned_to_grid"]),
+            "self_consumed_percent": (min(usage, production) / production * 100) if production else 0.0,
+        })
+    return rows
 
 
 def readings_frame(readings: list[Reading]) -> pd.DataFrame:
@@ -362,7 +595,7 @@ def gas_analysis_rows(readings: list[Reading], year: int, timezone_name: str = "
     return rows
 
 
-def solar_advice(annual_kwh: float, panel_wp: float = 455.0, yearly_yield_kwh: float | None = None, specific_yield_kwh_per_kwp: float = 880.0, roof_area_m2: float | None = None, panel_area_m2: float = 1.998, target_percent: float = 75.0) -> dict[str, SolarAdvice]:
+def solar_advice(annual_kwh: float, panel_wp: float = 455.0, yearly_yield_kwh: float | None = None, specific_yield_kwh_per_kwp: float = 880.0, roof_area_m2: float | None = None, panel_area_m2: float = 1.998, target_percent: float = 75.0, feed_in_tariff_eur_per_kwh: float = 0.0) -> dict[str, SolarAdvice]:
     yield_per_panel = yearly_yield_kwh if yearly_yield_kwh is not None else panel_wp / 1000 * specific_yield_kwh_per_kwp
     target_kwh = annual_kwh * target_percent / 100
     target_count = math.ceil(target_kwh / yield_per_panel) if target_kwh > 0 else 0
@@ -374,5 +607,7 @@ def solar_advice(annual_kwh: float, panel_wp: float = 455.0, yearly_yield_kwh: f
     advice: dict[str, SolarAdvice] = {}
     for name, count in scenarios.items():
         expected = count * yield_per_panel
-        advice[name] = SolarAdvice(count, count * panel_wp / 1000, expected, expected / annual_kwh * 100 if annual_kwh else 0.0)
+        # Under salderen, a feed-in tariff only applies to the annual surplus beyond usage, not to gross production.
+        surplus = max(expected - annual_kwh, 0.0)
+        advice[name] = SolarAdvice(count, count * panel_wp / 1000, expected, expected / annual_kwh * 100 if annual_kwh else 0.0, surplus, surplus * feed_in_tariff_eur_per_kwh)
     return advice

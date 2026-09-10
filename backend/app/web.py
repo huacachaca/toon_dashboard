@@ -9,8 +9,8 @@ from fastapi import APIRouter, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
-from .analysis import apply_forecast_electricity_adjustments, analysis_rows, annualized_usage, forecast_contract_year_rows, forecast_series, gas_analysis_rows, next_quarter_start, series, solar_advice, usage_between, zoom_window
-from .charts import render_forecast_chart, render_series_chart
+from .analysis import COMPASS_AZIMUTH, apply_forecast_electricity_adjustments, analysis_rows, annualized_usage, forecast_contract_year_rows, forecast_series, gas_analysis_rows, minimal_panels_for_sun_coverage, next_quarter_start, offset_analysis_rows, offset_series, series, solar_advice, usage_between, zoom_window
+from .charts import render_forecast_chart, render_offset_chart, render_series_chart
 from .config import Settings
 from .refresh import refresh_data
 from .store import Store
@@ -44,15 +44,23 @@ def _context(request: Request, settings: Settings, store: Store, **values: objec
 @router.get("/", response_class=HTMLResponse)
 def dashboard(
     request: Request,
-    stream: Annotated[str, Query(pattern="^(electricity|gas|forecast)$")] = "electricity",
+    stream: Annotated[str, Query(pattern="^(electricity|gas|forecast|offset)$")] = "electricity",
     selected_date: date | None = None,
     zoom: Annotated[str, Query(pattern="^(day|week|month|year)$")] = "day",
     induction: bool = False,
     heat_pump: bool = False,
+    solar_panels: int | None = None,
+    solar_orientation: Annotated[str, Query(pattern="^(N|NE|E|SE|S|SW|W|NW)$")] | None = None,
+    solar_orientation_secondary: Annotated[str, Query(pattern="^(N|NE|E|SE|S|SW|W|NW)$")] | None = None,
+    solar_secondary_share: float | None = None,
 ) -> HTMLResponse:
     settings: Settings = request.app.state.settings
     store: Store = request.app.state.store
     chosen_date = selected_date or date.today()
+    panel_count = settings.offset_default_panel_count if solar_panels is None else solar_panels
+    orientation = solar_orientation or settings.offset_default_orientation
+    secondary_orientation = solar_orientation_secondary or settings.offset_default_secondary_orientation
+    secondary_share = settings.offset_default_secondary_share_percent if solar_secondary_share is None else max(0.0, min(solar_secondary_share, 100.0))
     readings = store.all_readings()
     forecast_start = next_quarter_start(datetime.now(), settings.timezone)
     forecast_data = forecast_series(readings, settings.timezone, forecast_start=forecast_start, contract_start_month=settings.contract_start_month) if stream == "forecast" else None
@@ -70,6 +78,11 @@ def dashboard(
         chart_data = None
         rows = []
         annual_total = float(forecast_data["electricity"].sum() / 2) if not forecast_data.empty else 0.0
+    elif stream == "offset":
+        window_start, window_end, granularity = zoom_window(chosen_date, zoom, settings.timezone)
+        chart_data = offset_series(readings, granularity, window_start, window_end, panel_count, orientation, settings, secondary_orientation=secondary_orientation, secondary_share_percent=secondary_share)
+        rows = offset_analysis_rows(chart_data)
+        annual_total = annualized_usage(readings, "electricity", settings.timezone)
     else:
         window_start, window_end, granularity = zoom_window(chosen_date, zoom, settings.timezone)
         chart_data = series(readings, stream, granularity, window_start, window_end, settings.timezone)
@@ -83,6 +96,7 @@ def dashboard(
         specific_yield_kwh_per_kwp=settings.specific_yield_kwh_per_kwp,
         panel_area_m2=settings.panel_area_m2,
         target_percent=settings.solar_target_percent,
+        feed_in_tariff_eur_per_kwh=settings.feed_in_tariff_eur_per_kwh,
     ) if has_solar_basis else {}
     forecast_solar_advice = [
         solar_advice(
@@ -92,14 +106,16 @@ def dashboard(
             specific_yield_kwh_per_kwp=settings.specific_yield_kwh_per_kwp,
             panel_area_m2=settings.panel_area_m2,
             target_percent=settings.solar_target_percent,
+            feed_in_tariff_eur_per_kwh=settings.feed_in_tariff_eur_per_kwh,
         )
         for row in forecast_year_rows
     ] if stream == "forecast" else []
     forecast_solar_rows = list(zip(forecast_year_rows, forecast_solar_advice))
+    export_advice = minimal_panels_for_sun_coverage(readings, orientation, settings, target_percent=settings.solar_target_percent, secondary_orientation=secondary_orientation, secondary_share_percent=secondary_share) if stream == "offset" else None
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
-        context=_context(request, settings, store, stream=stream, selected_date=chosen_date, zoom=zoom, induction=induction, heat_pump=heat_pump, forecast_start=forecast_start, chart_data=chart_data, forecast_data=forecast_data, forecast_year_rows=forecast_year_rows, forecast_solar_rows=forecast_solar_rows, analysis_rows=rows, solar_advice=advice),
+        context=_context(request, settings, store, stream=stream, selected_date=chosen_date, zoom=zoom, induction=induction, heat_pump=heat_pump, solar_panels=panel_count, solar_orientation=orientation, solar_orientation_secondary=secondary_orientation, solar_secondary_share=secondary_share, compass_options=list(COMPASS_AZIMUTH), export_advice=export_advice, forecast_start=forecast_start, chart_data=chart_data, forecast_data=forecast_data, forecast_year_rows=forecast_year_rows, forecast_solar_rows=forecast_solar_rows, analysis_rows=rows, solar_advice=advice),
     )
 
 
@@ -120,9 +136,9 @@ def refresh(request: Request) -> HTMLResponse:
 @router.post("/forecast-settings", response_class=HTMLResponse)
 def forecast_settings(
     request: Request,
-    electricity_tn_base: Annotated[float, Form(ge=0)] = 0.0,
-    electricity_tl_base: Annotated[float, Form(ge=0)] = 0.0,
-    gas_base: Annotated[float, Form(ge=0)] = 0.0,
+    electricity_tn_base: Annotated[float, Form(ge=0)] = 17386.0,
+    electricity_tl_base: Annotated[float, Form(ge=0)] = 19424.0,
+    gas_base: Annotated[float, Form(ge=0)] = 6183.0,
     forecast_base_date: Annotated[date, Form()] = date(2026, 8, 1),
     contract_start_month: Annotated[int, Form(ge=1, le=12)] = 8,
 ) -> RedirectResponse:
@@ -168,11 +184,15 @@ def status(request: Request) -> HTMLResponse:
 @router.get("/series")
 def chart(
     request: Request,
-    stream: Annotated[str, Query(pattern="^(electricity|gas|forecast)$")] = "electricity",
+    stream: Annotated[str, Query(pattern="^(electricity|gas|forecast|offset)$")] = "electricity",
     selected_date: date | None = None,
     zoom: Annotated[str, Query(pattern="^(day|week|month|year)$")] = "day",
     induction: bool = False,
     heat_pump: bool = False,
+    solar_panels: int | None = None,
+    solar_orientation: Annotated[str, Query(pattern="^(N|NE|E|SE|S|SW|W|NW)$")] | None = None,
+    solar_orientation_secondary: Annotated[str, Query(pattern="^(N|NE|E|SE|S|SW|W|NW)$")] | None = None,
+    solar_secondary_share: float | None = None,
 ) -> Response:
     settings: Settings = request.app.state.settings
     store: Store = request.app.state.store
@@ -200,5 +220,12 @@ def chart(
             media_type="image/svg+xml",
         )
     window_start, window_end, granularity = zoom_window(chosen_date, zoom, settings.timezone)
+    if stream == "offset":
+        panel_count = settings.offset_default_panel_count if solar_panels is None else solar_panels
+        orientation = solar_orientation or settings.offset_default_orientation
+        secondary_orientation = solar_orientation_secondary or settings.offset_default_secondary_orientation
+        secondary_share = settings.offset_default_secondary_share_percent if solar_secondary_share is None else max(0.0, min(solar_secondary_share, 100.0))
+        chart_data = offset_series(store.all_readings(), granularity, window_start, window_end, panel_count, orientation, settings, secondary_orientation=secondary_orientation, secondary_share_percent=secondary_share)
+        return Response(render_offset_chart(chart_data, granularity), media_type="image/svg+xml")
     chart_data = series(store.all_readings(), stream, granularity, window_start, window_end, settings.timezone)
     return Response(render_series_chart(chart_data, stream, granularity), media_type="image/svg+xml")
